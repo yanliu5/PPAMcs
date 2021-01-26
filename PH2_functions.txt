@@ -1,0 +1,513 @@
+
+
+###########################################################################################################################
+# Select the lambda
+
+Lam_FS <- function(lambda,lam_u=1e6,tol_1,tol_2,itmax=100,ctmax=500){
+
+  #lambda <- rep(0.1,3)
+  S_0 <- bdiag(matrix(0,p,p),DMD_0,matrix(0,K_1,K_1),matrix(0,K_2,K_2))
+  S_1 <- bdiag(matrix(0,p,p),matrix(0,K_0,K_0),DMD_1,matrix(0,K_2,K_2))
+  S_2 <- bdiag(matrix(0,p,p),matrix(0,K_0,K_0),matrix(0,K_1,K_1),DMD_2)
+	
+  environment(llh)        <- environment()
+  environment(llh_gr)     <- environment()
+  environment(llh_fisher) <- environment()
+  environment(llh_cov)    <- environment()
+	
+  theta_lam <- c(rep(0,p),(1:K_0)/10,rep(0,K_1),rep(0,K_2))
+  theta0    <- c(rep(0,p),(1:K_0)/10,rep(0,K_1),rep(0,K_2))
+  ##################################################################################
+  # Conduct the optimization to find theta with given lambda
+  abs.diff  <- 1
+  count     <- 0
+
+  #cons_mat <- cbind(matrix(0,K_0-1,p),diff(diag(K_0)),matrix(0,K_0-1,K_1),matrix(0,K_0-1,K_2))
+  #cons_vec <- rep(0,K_0-1)
+  #lam0     <- try(constrOptim(theta0,f=llh,grad=llh_gr,ui=cons_mat,ci=cons_vec,lambda=rep(0.1,3),hessian=TRUE),silent=TRUE)
+  #theta0   <- lam0$par
+	
+  while(abs.diff>tol_2&count<=ctmax){
+    theta <- nlminb(theta0,objective=llh,gradient=llh_gr,hessian=llh_fisher,lambda=lambda,control=list(iter.max=1))$par
+    #mat_fish  <- llh_fisher(theta,lambda)
+    wt_til    <- (diag(solve(llh_fisher(theta,lambda))))[(p+1):(p+K_0)]
+    gama_til  <- pava(y=theta[(p+1):(p+K_0)],w=wt_til)
+    theta[(p+1):(p+K_0)] <- gama_til
+      abs.diff  <- max(abs(theta-theta0))
+      theta0    <- theta
+      count     <- count + 1
+  }
+	
+	theta_lam <- theta0
+	
+	##################################################################################
+	adif <- 1
+	iter <- 0
+	
+	while(adif>tol_1 & iter<=itmax){
+	S.lam <- bdiag(matrix(0,p,p),lambda[1]*DMD_0,lambda[2]*DMD_1,lambda[3]*DMD_2)
+	V.lam <- solve(llh_fisher(theta_lam,lambda))
+	S.lam.gin <- ginv(as.matrix(S.lam))
+	
+	up0 <- as.numeric(sum(diag(S.lam.gin%*%S_0))-sum(diag(V.lam%*%S_0)))
+         up1 <- as.numeric(sum(diag(S.lam.gin%*%S_1))-sum(diag(V.lam%*%S_1)))
+         up2 <- as.numeric(sum(diag(S.lam.gin%*%S_2))-sum(diag(V.lam%*%S_2)))
+	
+	bot0      <- as.numeric(t(theta_lam)%*%S_0%*%(theta_lam))
+	bot1      <- as.numeric(t(theta_lam)%*%S_1%*%(theta_lam))
+	bot2      <- as.numeric(t(theta_lam)%*%S_2%*%(theta_lam))
+	
+	lambda[1] <- lambda[1] * (up0/bot0)
+  lambda[2] <- lambda[2] * (up1/bot1)
+  lambda[3] <- lambda[3] * (up2/bot2)
+	
+	if(is.na(lambda[1])){lambda[1]=0}else{
+		if(lambda[1]>lam_u){lambda[1]=lam_u}
+		if(lambda[1]<0){lambda[1]=1e-3}
+	}
+	
+	if(lambda[2]>lam_u){lambda[2]=lam_u}
+	if(lambda[3]>lam_u){lambda[3]=lam_u}
+	
+	
+	if(lambda[2]<0){lambda[2]=1e-3}
+	if(lambda[3]<0){lambda[3]=1e-3}
+	
+	#if(min(lambda)<0){iter=itmax+1;break}
+	#print(lambda)
+	
+	##################################################################################
+	# Conduct the optimization to find theta with given lambda
+	abs.diff  <- 1
+	count     <- 0
+	while(abs.diff>tol_2&count<=ctmax){
+		theta     <- nlminb(theta0,objective=llh,gradient=llh_gr,hessian=llh_fisher,lambda=lambda,control=list(iter.max=1))$par
+		wt_til    <- (diag(solve(llh_fisher(theta,lambda))))[(p+1):(p+K_0)]
+		gama_til  <- pava(y=theta[(p+1):(p+K_0)],w=wt_til)
+		theta[(p+1):(p+K_0)] <- gama_til
+		abs.diff  <- max(abs(theta-theta0))
+		theta0    <- theta
+		count     <- count + 1
+	}
+	##################################################################################
+	adif      <- max(abs(theta_lam-theta0))
+	theta_lam <- theta0
+	#print(c(adif))
+	iter      <- iter + 1
+	
+	}
+	
+	if(min(lambda)>=0){
+	se1       <- sqrt(diag(llh_cov(theta_lam,lambda))[1:p])}else{se1 <- 0}
+        llk0      <- llh(theta_lam,lambda=c(0,0,0))
+         phat     <- sum(diag(llh_fisher(theta_lam,lambda=c(0,0,0))%*%solve(llh_fisher(theta_lam,lambda))))
+	return(list(llk0=-llk0,phat=phat,lambda=lambda,par=theta_lam,se=se1,flag=as.numeric(min(lambda)<0|iter>=itmax)))
+}
+
+
+###########################################################################################################################
+# Fit model with lambda=0
+Lam_0 <- function(tol_2=1e-6,ctmax=500){
+    
+	environment(llh)        <- environment()
+	environment(llh_gr)     <- environment()
+	environment(llh_fisher) <- environment()
+	
+	lambda    <- c(0.0,0.0,0.0)
+	theta_lam <- c(rep(0,p),(1:K_0)/10,rep(0,K_1),rep(0,K_2))
+	theta0    <- c(rep(0,p),(1:K_0)/10,rep(0,K_1),rep(0,K_2))
+	abs.diff  <- 1
+	count     <- 0
+	while(abs.diff>tol_2&count<=ctmax){
+		theta <- nlminb(theta0,objective=llh,gradient=llh_gr,hessian=llh_fisher,lambda=lambda,control=list(iter.max=1))$par
+		wt_til    <- (diag(solve(llh_fisher(theta,lambda))))[(p+1):(p+K_0)]
+		gama_til  <- pava(y=theta[(p+1):(p+K_0)],w=wt_til)
+		theta[(p+1):(p+K_0)] <- gama_til
+		abs.diff  <- max(abs(theta-theta0))
+		theta0    <- theta
+		count     <- count + 1
+	}
+	theta_ini <- theta0
+	se0       <- sqrt(diag(solve(llh_fisher(theta_ini,lambda)))[1:p])
+	return(list('par'=theta_ini,'se'=se0))
+}
+
+
+
+##################################################################
+# Log likelihood functions
+llh <- function(theta,lambda){
+
+gama      <- theta[(p+1):(p+K_0)] 
+alpha_1   <- theta[(p+K_0+1):(p+K_0+K_1)] 
+alpha_2   <- theta[(p+K_0+K_1+1):(p+K_0+K_1+K_2)] 
+xpt       <- as.numeric(Xp%*%theta)
+expt      <- exp(xpt)
+pi        <- 1-exp(-expt)
+
+res1 <- sum(log(pi[delta==1])) + sum(log(1-pi[delta==0]))
+res2 <- -lambda[1]*t(gama)%*%DMD_0%*%gama/2-lambda[2]*t(alpha_1)%*%(DMD_1)%*%alpha_1/2
+        -lambda[3]*t(alpha_2)%*%(DMD_2)%*%alpha_2/2
+res  <- as.numeric(res1 + res2)
+
+return(-res)
+}
+
+##################################################################
+# Gradient of Log likelihood functions
+llh_gr <- function(theta,lambda){
+
+gama      <- theta[(p+1):(p+K_0)] 
+alpha_1   <- theta[(p+K_0+1):(p+K_0+K_1)] 
+alpha_2   <- theta[(p+K_0+K_1+1):(p+K_0+K_1+K_2)] 
+xpt       <- as.numeric(Xp%*%theta)
+expt      <- exp(xpt)
+pi        <- 1-exp(-expt)
+#xi        <- exp(-expt)*expt
+nu        <- delta-pi
+cf        <- expt*nu/pi
+cf[pi==0&delta==1] <- 1
+cf[pi==1&delta==1] <- 0
+cf[pi==0&delta==0] <- 0
+
+grad_theta_1 <- colSums(Xp*cf)
+grad_theta_2 <- c(rep(0,p),lambda[1]*DMD_0%*%gama,lambda[2]*DMD_1%*%alpha_1,lambda[3]*DMD_2%*%alpha_2)
+grad_theta   <- grad_theta_1 - grad_theta_2
+return(-grad_theta)
+
+}
+
+
+##################################################################
+# Observed fisher information of Log likelihood functions
+llh_fisher <- function(theta,lambda){
+
+gama      <- theta[(p+1):(p+K_0)] 
+alpha_1   <- theta[(p+K_0+1):(p+K_0+K_1)] 
+alpha_2   <- theta[(p+K_0+K_1+1):(p+K_0+K_1+K_2)] 
+xpt       <- as.numeric(Xp%*%theta)
+expt      <- exp(xpt)
+pi        <- 1-exp(-expt)
+#xi        <- exp(-expt)*expt
+nu        <- delta-pi
+cf        <- (1-pi)/pi*exp(2*xpt)
+cf[pi==0] <- 0
+cf[pi==1] <- 0
+
+hes_theta_1  <- crossprod(cf*Xp,Xp)
+hes_theta_2  <- bdiag(matrix(0,p,p),lambda[1]*DMD_0,lambda[2]*DMD_1,lambda[3]*DMD_2)
+hes_theta    <- as.matrix(hes_theta_1+hes_theta_2)
+return(hes_theta)
+
+}
+
+##################################################################
+# sandwich estimator of model parameter
+llh_cov <- function(theta,lambda){
+
+gama      <- theta[(p+1):(p+K_0)] 
+alpha_1   <- theta[(p+K_0+1):(p+K_0+K_1)] 
+alpha_2   <- theta[(p+K_0+K_1+1):(p+K_0+K_1+K_2)] 
+xpt       <- as.numeric(Xp%*%theta)
+expt      <- exp(xpt)
+pi        <- 1-exp(-expt)
+#xi        <- exp(-expt)*expt
+nu        <- delta-pi
+
+cf        <- (1-pi)/pi*exp(2*xpt)
+cf[pi==0] <- 0
+cf[pi==1] <- 0
+
+hes_theta_1  <- crossprod(cf*Xp,Xp)
+hes_theta_2  <- bdiag(matrix(0,p,p),lambda[1]*DMD_0,lambda[2]*DMD_1,lambda[3]*DMD_2)
+hes_theta    <- as.matrix(hes_theta_1+hes_theta_2)
+inv_hes      <- solve(hes_theta)
+cov_theta    <- inv_hes%*%hes_theta_1%*%inv_hes
+return(cov_theta)
+
+}
+
+##############################################################
+# Data Generation for current status data
+
+data.gen.CS.PH<-function(N,opt,v.seq,w.seq,u.seq){
+  
+  fn1 <- function(w){exp(w+0.5)-(exp(2)-1)/(2*exp(0.5))}
+  fn2 <- function(w){2*sin(-pi*w)}
+  fn3 <- function(w){4*(w^2-1/3)}
+  
+  be1 <- function(t){2*t}
+  be2 <- function(t){1.5*t-log(1+1.5*t)}
+  be3 <- function(t){log(1+t/10)+sqrt(t)/10}
+  
+  if(opt==1){
+    base  <- be1
+    phi1  <- fn1
+    phi2  <- fn2
+  }
+  
+  if(opt==2){
+    base  <- be2
+    phi1  <- fn2
+    phi2  <- fn3
+  }
+  
+  if(opt==3){
+    base  <- be3
+    phi1  <- fn3
+    phi2  <- fn1
+  }
+  mexp <- c(2,2,1)
+  
+	bt    <- matrix(c(0.5,-0.5,0.5,0.5,-0.5,-0.5),3,2,byrow=TRUE)
+	b     <- bt[opt,]
+	#Z     <- cbind(rbinom(N,1,.5),runif(N,-2,2))
+	Z     <- cbind(rbinom(N,1,.5),rnorm(N))
+	W1    <- runif(N,-1,1)
+	W2    <- runif(N,-1,1)
+	xb    <- Z%*%b+phi1(W1)+phi2(W2)   # Generate under partially linear model
+	ti    <- rexp(N,1/mexp[opt])       # Mean mexp; censoring time
+	Ft    <- 1-exp(-base(ti)*exp(xb))
+	delta <- rbinom(N,1,Ft)            # delta=1 for left censor; true t < censoring t
+
+	adj1  <- phi1(-1)
+	adj2  <- phi2(-1)
+	return(list(delta=delta,Z=Z,Ci=ti,W1=W1,W2=W2,adj1=adj1,adj2=adj2,
+								ft=base(v.seq),fw=phi1(w.seq),fu=phi2(u.seq)))
+}
+
+
+##############################################################
+# Data Generation for current status data with given alpha
+# alpha > 0
+
+
+data.gen.CS.alpha<-function(N,alpha,opt,v.seq,w.seq,u.seq){
+  
+  fn1 <- function(w){exp(w+0.5)-(exp(2)-1)/(2*exp(0.5))}
+  fn2 <- function(w){2*sin(-pi*w)}
+  fn3 <- function(w){4*(w^2-1/3)}
+  
+  be1 <- function(t){2*t}
+  be2 <- function(t){1.5*t-log(1+1.5*t)}
+  be3 <- function(t){log(1+t/10)+sqrt(t)/10}
+  
+  if(opt==1){
+    base  <- be1
+    phi1  <- fn1
+    phi2  <- fn2
+  }
+  
+  if(opt==2){
+    base  <- be2
+    phi1  <- fn2
+    phi2  <- fn3
+  }
+  
+  if(opt==3){
+    base  <- be3
+    phi1  <- fn3
+    phi2  <- fn1
+  }
+  
+  mexp <- c(2,2,1)
+  
+	bt    <- matrix(c(0.5,-0.5,0.5,0.5,-0.5,-0.5),3,2,byrow=TRUE)
+	b     <- bt[opt,]
+	#Z     <- cbind(rbinom(N,1,.5),runif(N,-2,2))
+	Z     <- cbind(rbinom(N,1,.5),rnorm(N))
+	W1    <- runif(N,-1,1)
+	W2    <- runif(N,-1,1)
+	xb    <- Z%*%b+phi1(W1)+phi2(W2)   # Generate under partially linear model
+	ti    <- rexp(N,1/mexp[opt])       # Mean mexp; censoring time
+	if(alpha==0){
+		Ft    <- 1-exp(-base(ti)*exp(xb))
+	}else{
+		Ft    <- 1-(1+alpha*base(ti)*exp(xb))^(-1/alpha)
+	}
+	
+	adj1  <- phi1(-1)
+	adj2  <- phi2(-1)
+	delta <- rbinom(N,1,Ft)            # delta=1 for left censor; true t < censoring t
+
+	return(list(delta=delta,Z=Z,Ci=ti,W1=W1,W2=W2,adj1=adj1,adj2=adj2,
+								ft=base(v.seq),fw=phi1(w.seq),fu=phi2(u.seq)))
+}
+
+###################################################################################################################
+# Fit the model using three approaches; non-penalized, penalized R, penalized isotonic
+
+TS.fit <- function(N,n.int,obs_dat,degree,order,W1.seq,W2.seq,t.seq,scale=TRUE,equal=FALSE){
+	################ read in data: 
+	#obs_dat = dat;n.int=Nk;W1.seq=W2.seq=w.seq;t.seq=v.seq
+	Z     <- obs_dat$Z
+	W1    <- obs_dat$W1
+	W2    <- obs_dat$W2
+	p     <- ncol(Z)
+	Ci    <- obs_dat$Ci
+	delta <- obs_dat$delta
+	Xp    <- Z
+	####################################################################################################
+	# B-spline for additive function
+	id <- seq(0, 1, length.out = (n.int + 2))
+	id <- id[-c(1, (n.int + 2))]
+
+	####################################################################################################
+	# Function I
+	
+	if(equal==TRUE){
+	  w1.max <- max(W1) + 1e-05
+	  w1.min <- min(W1) - 1e-05
+	  knots1 <- seq(w1.min, w1.max, length.out = (n.int + 2))[-c(1, (n.int + 2))]
+	}else{
+	  id <- seq(0, 1, length.out = (n.int + 2))
+	  id <- id[-c(1, (n.int + 2))]
+	  w1.max <- max(W1) + 1e-05
+	  w1.min <- min(W1) - 1e-05
+	  knots1 <- quantile(W1, id)
+	}
+	
+	Bw1.o<-bs(x=W1, knots = knots1, degree = degree, Boundary.knots=c(w1.min,w1.max),intercept=TRUE)
+	Bwseq1.o <- bs(x=W1.seq, knots = knots1, degree = degree, Boundary.knots=c(w1.min,w1.max),intercept=TRUE)
+	
+	Bw1.c <- matrix(colMeans(Bw1.o),nrow=1)
+	res <- qr(t(Bw1.c))
+	Bw1.Q <- qr.Q(res,complete=TRUE)
+	Bw1.R <- qr.R(res,complete=TRUE)
+	dim(Bw1.Q)
+	dim(Bw1.R)
+	diag(Bw1.Q%*%t(Bw1.Q))
+	Zw1 <- Bw1.Q[,seq(ncol(Bw1.R)+1,ncol(Bw1.Q))]
+	
+	Bw1 <- Bw1.o%*%Zw1
+	Bwseq1 <- Bwseq1.o%*%Zw1
+	####################################################################################################
+	# Function II
+	
+	if(equal==TRUE){
+	  w2.max <- max(W2) + 1e-05
+	  w2.min <- min(W2) - 1e-05
+		knots2 <- seq(w2.min,w2.max,length.out=n.int+2)[-c(1, (n.int + 2))]
+	}else{
+		id <- seq(0, 1, length.out = (n.int + 2))
+	  id <- id[-c(1, (n.int + 2))]
+	  w2.max <- max(W2) + 1e-05
+	  w2.min <- min(W2) - 1e-05
+	  knots2 <- quantile(W2, id)
+	}
+	
+	Bw2.o<-bs(x=W2, knots = knots2, degree = degree, Boundary.knots=c(w2.min,w2.max),intercept=TRUE)
+	Bwseq2.o <- bs(x=W2.seq, knots = knots2, degree = degree, Boundary.knots=c(w2.min,w2.max),intercept=TRUE)
+	
+	Bw2.c <- matrix(colMeans(Bw2.o),nrow=1)
+	res <- qr(t(Bw2.c))
+	Bw2.Q <- qr.Q(res,complete=TRUE)
+	Bw2.R <- qr.R(res,complete=TRUE)
+	dim(Bw2.Q)
+	dim(Bw2.R)
+	diag(Bw2.Q%*%t(Bw2.Q))
+	Zw2 <- Bw2.Q[,seq(ncol(Bw2.R)+1,ncol(Bw2.Q))]
+	
+	Bw2 <- Bw2.o%*%Zw2
+	Bwseq2 <- Bwseq2.o%*%Zw2
+	
+	####################################################################################################
+	# M spline for baseline hazard
+	ti <- Ci
+
+
+	if (equal == TRUE) {
+		ti.max <- max(ti) + 1e-05
+		ti.min <- min(ti) - 1e-05
+		knots.I <- seq(ti.min, ti.max, length.out = (n.int + 2))[-c(1, (n.int + 2))]
+	}
+
+	if (equal == FALSE) {
+		id <- seq(0, 1, length.out = (n.int + 2))
+		id <- id[-c(1, (n.int + 2))]
+		ti.max <- max(ti) + 1e-05
+		ti.min <- min(ti) - 1e-05
+		knots.I <- quantile(ti, id)
+	}
+
+	bCi  <- bs(x=Ci, knots = knots.I, degree = degree, Boundary.knots=c(ti.min,ti.max),intercept=TRUE)
+	bt_I <- bs(x=t.seq, knots = knots.I, degree = degree, Boundary.knots=c(ti.min,ti.max),intercept=TRUE)
+	
+	####################################################################################################
+	# Specify the variables
+	
+	Xp<-cbind(Z,bCi,Bw1,Bw2)
+	
+	K_0 <- ncol(bCi)
+	K_1 <- ncol(Bw1)
+	K_2 <- ncol(Bw2)
+
+  if(FALSE){
+		pord <- 2
+		DM_0 <- (diag(K_0))                      # order 0 matrix
+		for(k in 1:pord) DM_0 <- diff(DM_0)      # order pord matrix; pord >= 1
+
+		DM_1 <- (diag(ncol(Bw1)))                # order 0 matrix
+		for(k in 1:pord) DM_1 <- diff(DM_1)      # order pord matrix; pord >= 1
+		
+		DM_2 <- (diag(ncol(Bw2)))                # order 0 matrix
+		for(k in 1:pord) DM_2 <- diff(DM_2)      # order pord matrix; pord >= 1
+
+		DMD_0 <- crossprod(DM_0) 
+		DMD_1 <- crossprod(DM_1)
+		DMD_2 <- crossprod(DM_2)
+	}
+	
+	if(TRUE){
+	mm    <- c(3,2)
+	knots <- data.frame( ti=c(rep(ti.min,mm[1]+1),knots.I,rep(ti.max,mm[1]+1)) )
+	smT   <- smoothCon(s(ti,bs="bs",m=mm,k=n.int+mm[1]+1),data.frame(ti),knots=knots,scale.penalty=scale)[[1]]
+  DMD_0 <- smT$S[[1]]
+	
+	knots <- data.frame( W1=c(rep(w1.min,mm[1]+1),knots1,rep(w1.max,mm[1]+1)) )
+	smT   <- smoothCon(s(W1,bs="bs",m=mm,k=n.int+mm[1]+1),data.frame(W1),knots=knots,scale.penalty=scale)[[1]]
+  DMD_1 <- smT$S[[1]]
+	
+	knots <- data.frame( W2=c(rep(w2.min,mm[1]+1),knots2,rep(w2.max,mm[1]+1)) )
+	smT   <- smoothCon(s(W2,bs="bs",m=mm,k=n.int+mm[1]+1),data.frame(W2),knots=knots,scale.penalty=scale)[[1]]
+  DMD_2 <- smT$S[[1]]
+
+	
+	DMD_1 <- (t(Zw1)%*%DMD_1%*%Zw1)
+	DMD_2 <- (t(Zw2)%*%DMD_2%*%Zw2)
+	
+  }
+	
+	####################################################################################################
+	# Approach I: constrained optimization
+	environment(llh)        <- environment()
+	environment(llh_gr)     <- environment()
+	environment(llh_fisher) <- environment()
+	environment(Lam_FS)     <- environment()
+	
+	#theta0   <- c(rep(0,p),(1:K_0)/10,rep(0,K_1),rep(0,K_2))
+	#cons_mat <- cbind(matrix(0,K_0-1,p),diff(diag(K_0)),matrix(0,K_0-1,K_1),matrix(0,K_0-1,K_2))
+	#cons_vec <- rep(0,K_0-1)
+	#lam0     <- try(constrOptim(theta0,f=llh,grad=llh_gr,ui=cons_mat,ci=cons_vec,lambda=c(0.0,0.0,0.0),hessian=TRUE),silent=TRUE)
+	#inv_fis  <- try(solve(llh_fisher(lam0$par,lambda)),silent=TRUE)
+	#se0      <- (sqrt(diag(inv_fis)))[1:p]
+	#lam0$se0 <- se0
+	####################################################################################################
+	# Approach I: constrained optimization
+	tol_2    <- 1e-3
+	ctmax    <- 100
+
+	####################################################################################################
+	# Approach II, using nlminb with expected fisher information and isototic regression
+
+	lam2  <- Lam_FS(c(1,1,1),1e5,1e-4,tol_2,100,ctmax)
+
+	####################################################################################################
+	# obtain the estimated value for functions
+
+	f0_lam2  <- bt_I%*%lam2$par[seq(p+1,p+K_0)]
+	f1_lam2  <- Bwseq1%*%lam2$par[seq(p+K_0+1,p+K_0+K_1)]
+	f2_lam2  <- Bwseq2%*%lam2$par[seq(p+K_0+K_1+1,p+K_0+K_1+K_2)]
+	
+	return(list('Xp'=Xp,'lam2'=lam2,'f0_lam2'=f0_lam2,'f1_lam2'=f1_lam2,'f2_lam2'=f2_lam2))
+}
