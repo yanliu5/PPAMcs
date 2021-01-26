@@ -1,4 +1,4 @@
-# PPAMcs
+# PPATcs
 Penalized Partially linear additive transformation model for current status data
 
 This repository contains R programs for the article, “A penalized likelihood approach for efficiently estimating a partially linear additive transformation model with current status data,” by Yan Liu, Minggen Lu, and Christopher McMahan. This article has been submitted.
